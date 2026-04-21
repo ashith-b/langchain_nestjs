@@ -25,7 +25,7 @@ A sophisticated Node.js application combining **NestJS** framework with **LangCh
 ### 1. Clone the Repository
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/ashith-b/langchain_nestjs
 cd nestjs-langchain
 ```
 
