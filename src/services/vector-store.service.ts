@@ -1,41 +1,5 @@
-/**
- * Service for managing vector storage and performing operations like adding documents
- * and conducting similarity searches using PGVector and OpenAI embeddings.
- *
- * This service initializes a PostgreSQL connection pool, sets up a vector store using
- * PGVector, and provides methods to add documents to the store and perform similarity
- * searches. It ensures that the necessary database schema and extensions are created
- * during module initialization and properly releases resources on module destruction.
- *
- * @class VectorStoreService
- * @decorator Injectable - Marks the class as a service that can be injected.
- *
- * @property {PGVectorStore} pgvectorStore - The PGVector store instance for storing
- *                                           and searching vectors.
- * @property {pg.Pool} pool - The PostgreSQL connection pool for database operations.
- *
- * @method onModuleInit - Initializes the service by setting up the database schema and
- *                        configuring the PGVector store. It is automatically called by
- *                        NestJS when the module is initialized.
- *
- * @method ensureDatabaseSchema - Ensures the required database schema and extensions
- *                                are present. It creates them if they don't exist.
- *                                This method is private and only called internally.
- *
- * @method addDocuments - Adds an array of documents to the vector store. Each document
- *                        is processed to extract its vector representation before storage.
- *
- * @method similaritySearch - Performs a similarity search in the vector store based on
- *                            a query string and returns the most similar documents up to
- *                            a specified limit.
- *
- * @method onModuleDestroy - Cleans up resources by ending the PostgreSQL pool connection.
- *                           It is automatically called by NestJS when the module is
- *                           destroyed.
- */
-
 import { Injectable } from '@nestjs/common';
-import { OpenAIEmbeddings } from '@langchain/openai';
+import { HuggingFaceTransformersEmbeddings } from '@langchain/community/embeddings/hf_transformers';
 import {
   DistanceStrategy,
   PGVectorStore,
@@ -50,11 +14,12 @@ export class VectorStoreService {
   private pool: pg.Pool;
 
   async onModuleInit() {
+    console.log('VectorStoreService initializing...');
     const { postgresConnectionOptions, tableName, columns, distanceStrategy } =
       config;
     this.pool = new pg.Pool(postgresConnectionOptions);
     await this.ensureDatabaseSchema();
-
+    console.log('Database schema ensured'); 
     const pgVectorConfig = {
       pool: this.pool,
       tableName,
@@ -62,10 +27,13 @@ export class VectorStoreService {
       distanceStrategy,
     };
 
-    this.pgvectorStore = new PGVectorStore(
-      new OpenAIEmbeddings(),
+    this.pgvectorStore = await PGVectorStore.initialize(
+      new HuggingFaceTransformersEmbeddings({
+        modelName: 'Xenova/all-MiniLM-L6-v2',
+      }),
       pgVectorConfig,
     );
+    console.log('VectorStoreService initialized successfully');
   }
 
   private async ensureDatabaseSchema() {
@@ -90,10 +58,13 @@ export class VectorStoreService {
   }
 
   async addDocuments(documents: Document[]): Promise<void> {
+    console.log('Adding documents to vector store, count:', documents.length);
     await this.pgvectorStore.addDocuments(documents);
+    console.log('Documents added successfully');
   }
 
   async similaritySearch(query: string, limit: number): Promise<any> {
+    console.log('Similarity search query:', query, 'limit:', limit);
     return this.pgvectorStore.similaritySearch(query, limit);
   }
 

@@ -1,34 +1,3 @@
-/**
- * Service for handling Langchain Chat operations.
- *
- * This service facilitates various types of chat interactions using OpenAI's language models.
- * It supports basic chat, context-aware chat, document context chat, and PDF uploading functionalities.
- * Basic chat and context-aware chat utilize pre-defined templates for processing user queries,
- * whereas document chat leverages document context for more nuanced responses.
- * The PDF upload feature processes and stores PDF content for document context chats.
- *
- * @class LangchainChatService
- *
- * @method basicChat - Processes a basic chat message using a predefined template, sends it to the OpenAI model for a response, and formats the response. Handles errors with HttpExceptions.
- * @param {BasicMessageDto} basicMessageDto - Data Transfer Object containing the user's query.
- * @returns Formatted response from the OpenAI model.
- *
- * @method contextAwareChat - Processes messages with consideration for the context of previous interactions, using a context-aware template for coherent responses. Handles errors with HttpExceptions.
- * @param {ContextAwareMessagesDto} contextAwareMessagesDto - Data Transfer Object containing the user’s current message and the chat history.
- * @returns Contextually relevant response from the OpenAI model.
- *
- * @method documentChat - Processes a chat message with context derived from document similarity search, using a document-context template. Handles errors with HttpExceptions.
- * @param {BasicMessageDto} basicMessageDto - Data Transfer Object containing the user's query.
- * @returns Response from the OpenAI model, contextualized with document information.
- *
- * @method uploadPDF - Processes a PDF file by loading, splitting into text, and storing its content for later use in document context chats. Handles file existence verification and errors with HttpExceptions.
- * @param {DocumentDto} documentDto - Data Transfer Object containing the file path of the PDF to be processed.
- * @returns Success message upon successful PDF processing and storage.
- *
- * The class utilizes several internal methods for operations such as loading chat chains, formatting messages, generating success responses, and handling exceptions.
- * These methods interact with external libraries and services, including the OpenAI API, file system operations, and custom utilities for message formatting and response generation.
- */
-
 import {
   BadRequestException,
   HttpException,
@@ -37,18 +6,18 @@ import {
   Logger,
 } from '@nestjs/common';
 import { BasicMessageDto } from './dtos/basic-message.dto';
-import { PromptTemplate } from '@langchain/core/prompts';
-import { ChatOpenAI } from '@langchain/openai';
+import { PromptTemplate, ChatPromptTemplate, MessagesPlaceholder } from '@langchain/core/prompts';
+import { ChatGroq } from '@langchain/groq'; // 
 import { HttpResponseOutputParser } from 'langchain/output_parsers';
 import { TEMPLATES } from 'src/utils/constants/templates.constants';
 import customMessage from 'src/utils/responses/customMessage.response';
 import { MESSAGES } from 'src/utils/constants/messages.constants';
-import { openAI, vercelRoles } from 'src/utils/constants/openAI.constants';
+import { vercelRoles } from 'src/utils/constants/groq.constants';
 import { ContextAwareMessagesDto } from './dtos/context-aware-messages.dto';
 import { Message as VercelChatMessage } from 'ai';
 
 import { existsSync } from 'fs';
-import { PDFLoader } from 'langchain/document_loaders/fs/pdf';
+import { PDFLoader } from '@langchain/community/document_loaders/fs/pdf';
 import { RecursiveCharacterTextSplitter } from 'langchain/text_splitter';
 import { VectorStoreService } from 'src/services/vector-store.service';
 import * as path from 'path';
@@ -57,12 +26,14 @@ import { DocumentDto } from './dtos/document.dto';
 import { PDF_BASE_PATH } from 'src/utils/constants/common.constants';
 import { TavilySearchResults } from '@langchain/community/tools/tavily_search';
 import { AgentExecutor, createOpenAIFunctionsAgent } from 'langchain/agents';
-import {
-  ChatPromptTemplate,
-  MessagesPlaceholder,
-} from '@langchain/core/prompts';
-import { pull } from 'langchain/hub';
-import { HumanMessage, AIMessage } from 'langchain/schema';
+import { HumanMessage, AIMessage } from '@langchain/core/messages';
+
+
+const GROQ_MODELS = {
+  DEFAULT: 'llama-3.3-70b-versatile',           // General chat
+  TOOL_USE: 'llama-3.3-70b-versatile', // Function/tool calling
+  TEMPERATURE: 0,
+};
 
 @Injectable()
 export class LangchainChatService {
@@ -70,23 +41,28 @@ export class LangchainChatService {
 
   async basicChat(basicMessageDto: BasicMessageDto) {
     try {
+      console.log('basicChat input:', basicMessageDto);
       const chain = this.loadSingleChain(TEMPLATES.BASIC_CHAT_TEMPLATE);
       const response = await chain.invoke({
         input: basicMessageDto.user_query,
       });
+      console.log('basicChat response:', response); 
       return this.successResponse(response);
     } catch (e: unknown) {
+      console.error('basicChat error:', e);
       this.exceptionHandling(e);
     }
   }
 
   async contextAwareChat(contextAwareMessagesDto: ContextAwareMessagesDto) {
     try {
+      console.log('Input received:', contextAwareMessagesDto);
       const messages = contextAwareMessagesDto.messages ?? [];
       const formattedPreviousMessages = messages
         .slice(0, -1)
         .map(this.formatMessage);
       const currentMessageContent = messages[messages.length - 1].content;
+      console.log('Current message:', currentMessageContent);
 
       const chain = this.loadSingleChain(TEMPLATES.CONTEXT_AWARE_CHAT_TEMPLATE);
 
@@ -94,48 +70,51 @@ export class LangchainChatService {
         chat_history: formattedPreviousMessages.join('\n'),
         input: currentMessageContent,
       });
+      console.log('Response:', response);
       return this.successResponse(response);
     } catch (e: unknown) {
+      console.error('Error:', e);
       this.exceptionHandling(e);
     }
   }
 
   async documentChat(basicMessageDto: BasicMessageDto) {
     try {
+      console.log('documentChat input:', basicMessageDto);
       const documentContext = await this.vectorStoreService.similaritySearch(
         basicMessageDto.user_query,
         3,
       );
-
+      console.log('documentChat context found:', documentContext);
       const chain = this.loadSingleChain(
         TEMPLATES.DOCUMENT_CONTEXT_CHAT_TEMPLATE,
       );
-
+      
       const response = await chain.invoke({
         context: JSON.stringify(documentContext),
         question: basicMessageDto.user_query,
       });
+      console.log('documentChat response:', response);
       return this.successResponse(response);
     } catch (e: unknown) {
+      console.error('documentChat error:', e);
       this.exceptionHandling(e);
     }
   }
 
   async uploadPDF(documentDto: DocumentDto) {
     try {
-      // Load the file
+      console.log('uploadPDF input:', documentDto);
       const file = PDF_BASE_PATH + '/' + documentDto.file;
       const resolvedPath = path.resolve(file);
-      // Check if the file exists
+      console.log('uploadPDF resolved path:', resolvedPath);
       if (!existsSync(resolvedPath)) {
         throw new BadRequestException('File does not exist.');
       }
 
-      // Load the PDF using PDFLoader
       const pdfLoader = new PDFLoader(resolvedPath);
       const pdf = await pdfLoader.load();
-
-      // Split the PDF into texts using RecursiveCharacterTextSplitter
+      console.log('uploadPDF pages loaded:', pdf.length);
       const textSplitter = new RecursiveCharacterTextSplitter({
         chunkSize: 1000,
         chunkOverlap: 50,
@@ -148,23 +127,23 @@ export class LangchainChatService {
         const splitTexts = await textSplitter.splitText(page.pageContent);
         const pageEmbeddings = splitTexts.map((text) => ({
           pageContent: text,
-          metadata: {
-            pageNumber: index,
-          },
+          metadata: { pageNumber: index },
         }));
         embeddings = embeddings.concat(pageEmbeddings);
       }
+      console.log('uploadPDF total embeddings:', embeddings.length);
       await this.vectorStoreService.addDocuments(embeddings);
+      console.log('uploadPDF documents added to vector store'); 
       return customMessage(HttpStatus.OK, MESSAGES.SUCCESS);
     } catch (e: unknown) {
-      console.log(e);
-
+      console.error('uploadPDF error:', e);
       this.exceptionHandling(e);
     }
   }
 
   async agentChat(contextAwareMessagesDto: ContextAwareMessagesDto) {
     try {
+      console.log('agentChat input:', contextAwareMessagesDto);
       const tools = [new TavilySearchResults({ maxResults: 1 })];
 
       const messages = contextAwareMessagesDto.messages ?? [];
@@ -172,20 +151,22 @@ export class LangchainChatService {
         .slice(0, -1)
         .map(this.formatBaseMessages);
       const currentMessageContent = messages[messages.length - 1].content;
+      console.log('agentChat current message:', currentMessageContent);
 
       const prompt = ChatPromptTemplate.fromMessages([
         [
           'system',
-          'You are an agent that follows SI system standards and responds responds normally',
+          'You are a helpful assistant. Use tools when needed and follow SI system standards.',
         ],
-        new MessagesPlaceholder({ variableName: 'chat_history' }),
-        ['user', '{input}'],
-        new MessagesPlaceholder({ variableName: 'agent_scratchpad' }),
+        new MessagesPlaceholder({ variableName: 'chat_history', optional: true }),
+        ['human', '{input}'],
+        new MessagesPlaceholder({ variableName: 'agent_scratchpad' }), // ✅ Required by createToolCallingAgent
       ]);
 
-      const llm = new ChatOpenAI({
-        temperature: +openAI.BASIC_CHAT_OPENAI_TEMPERATURE,
-        modelName: openAI.GPT_3_5_TURBO_1106.toString(),
+      const llm = new ChatGroq({
+        temperature: GROQ_MODELS.TEMPERATURE,
+        model: GROQ_MODELS.TOOL_USE,
+        apiKey: process.env.GROQ_API_KEY,
       });
 
       const agent = await createOpenAIFunctionsAgent({
@@ -197,14 +178,17 @@ export class LangchainChatService {
       const agentExecutor = new AgentExecutor({
         agent,
         tools,
+        verbose: false, // set true for debugging tool call steps
       });
 
       const response = await agentExecutor.invoke({
         input: currentMessageContent,
         chat_history: formattedPreviousMessages,
       });
+      console.log('agentChat response:', response);
       return customMessage(HttpStatus.OK, MESSAGES.SUCCESS, response.output);
     } catch (e: unknown) {
+      console.error('agentChat error:', e);
       this.exceptionHandling(e);
     }
   }
@@ -212,9 +196,10 @@ export class LangchainChatService {
   private loadSingleChain = (template: string) => {
     const prompt = PromptTemplate.fromTemplate(template);
 
-    const model = new ChatOpenAI({
-      temperature: +openAI.BASIC_CHAT_OPENAI_TEMPERATURE,
-      modelName: openAI.GPT_3_5_TURBO_1106.toString(),
+    const model = new ChatGroq({
+      temperature: GROQ_MODELS.TEMPERATURE,
+      model: GROQ_MODELS.DEFAULT,
+      apiKey: process.env.GROQ_API_KEY,
     });
 
     const outputParser = new HttpResponseOutputParser();
