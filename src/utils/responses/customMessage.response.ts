@@ -6,3 +6,5 @@ function customMessage(statusCode: number, message: string, data = {}): object {
   };
 }
 export default customMessage;
+
+

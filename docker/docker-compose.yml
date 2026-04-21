@@ -11,4 +11,4 @@ services:
       - POSTGRES_USER=pgvector
       - POSTGRES_PASSWORD=admin
     volumes:
-      - ./init.sql:/docker-entrypoint/init.sql
+      - ./init.sql:/docker-entrypoint/init.sql  

@@ -332,7 +332,7 @@ npm run format         # Format code with Prettier
 - Verify port 5434 is accessible
 - Check PostgreSQL logs: `docker-compose logs db`
 
-### OpenAI API Key Invalid
+### Groq API Key Invalid
 - Verify your Groq API key is correct in `.env`
 - Ensure the API key has sufficient rate limits
 - Check API key permissions in [Groq Console](https://console.groq.com)
